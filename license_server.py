@@ -2,10 +2,12 @@ from flask import Flask, request, jsonify
 import sqlite3
 import datetime
 import os
+import secrets
 
 app = Flask(__name__)
 
 DB_NAME = "licenses.db"
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "super-long-admin-token-xyz")  # set di Render Dashboard
 
 # ------------------------------
 # 🧱 Inisialisasi Database
@@ -17,6 +19,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS licenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             license_key TEXT UNIQUE NOT NULL,
+            user TEXT,
+            hwid TEXT,
             status TEXT NOT NULL DEFAULT 'VALID',
             expire TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -25,6 +29,16 @@ def init_db():
     conn.commit()
     conn.close()
 
+# ------------------------------
+# 🛡️ Middleware: Verifikasi Admin Token
+# ------------------------------
+def require_admin(request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    token = auth.split("Bearer ")[1].strip()
+    return token == ADMIN_TOKEN
+
 
 # ------------------------------
 # 🔍 Cek License
@@ -32,21 +46,19 @@ def init_db():
 @app.route("/api/license", methods=["GET"])
 def check_license():
     key = request.args.get("key")
-    hwid = request.args.get("hwid")
-
     if not key:
         return jsonify({"status": "MISSING_KEY"}), 400
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT status, expire FROM licenses WHERE license_key = ?", (key,))
+    c.execute("SELECT status, expire, hwid FROM licenses WHERE license_key = ?", (key,))
     row = c.fetchone()
     conn.close()
 
     if not row:
         return jsonify({"status": "INVALID"}), 404
 
-    status, expire = row
+    status, expire, hwid = row
     if status != "VALID":
         return jsonify({"status": status}), 403
 
@@ -59,50 +71,43 @@ def check_license():
     return jsonify({
         "status": "VALID",
         "expire": expire,
-        "days_left": days_left
+        "days_left": days_left,
+        "hwid": hwid
     })
 
 
 # ------------------------------
-# ➕ Tambah License (POST)
+# 🔐 ADMIN: Buat Lisensi Baru
 # ------------------------------
-@app.route("/api/license/add", methods=["POST"])
-def add_license():
+@app.route("/api/admin/create", methods=["POST"])
+def admin_create_license():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
     data = request.get_json()
-    key = data.get("key")
-    expire = data.get("expire")
-    status = data.get("status", "VALID")
+    user = data.get("user", "unknown")
+    days = int(data.get("days", 30))
+    hwid = data.get("hwid")
+    expire_date = (datetime.date.today() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
 
-    if not key or not expire:
-        return jsonify({"error": "Missing key or expire"}), 400
-
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("INSERT INTO licenses (license_key, status, expire) VALUES (?, ?, ?)", (key, status, expire))
-        conn.commit()
-        conn.close()
-        return jsonify({"message": "License added successfully"}), 201
-    except sqlite3.IntegrityError:
-        return jsonify({"error": "License key already exists"}), 409
-
-
-# ------------------------------
-# ❌ Hapus License (DELETE)
-# ------------------------------
-@app.route("/api/license/delete", methods=["DELETE"])
-def delete_license():
-    key = request.args.get("key")
-    if not key:
-        return jsonify({"error": "Missing key"}), 400
+    # Generate random key
+    key = secrets.token_hex(6).upper()
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("DELETE FROM licenses WHERE license_key = ?", (key,))
+    c.execute("""
+        INSERT INTO licenses (license_key, user, hwid, status, expire)
+        VALUES (?, ?, ?, 'VALID', ?)
+    """, (key, user, hwid, expire_date))
     conn.commit()
     conn.close()
 
-    return jsonify({"message": f"License {key} deleted (if it existed)."})
+    return jsonify({
+        "message": "License created successfully",
+        "key": key,
+        "user": user,
+        "expire": expire_date
+    }), 201
 
 
 # ------------------------------
