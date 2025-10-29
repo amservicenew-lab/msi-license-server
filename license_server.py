@@ -121,6 +121,59 @@ def admin_create_license():
         print("🔥 ERROR saat membuat lisensi:", e)
         return jsonify({"error": str(e)}), 500
 
+# ==============================
+# 🧾 ADMIN: LIST ALL LICENSES
+# ==============================
+@app.route("/api/admin/list", methods=["GET"])
+def admin_list_licenses():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # optional query params: status, user
+    status_filter = request.args.get("status")
+    user_filter = request.args.get("user")
+
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        sql = "SELECT license_key, user, hwid, status, expire, created_at FROM licenses"
+        conditions = []
+        params = []
+
+        if status_filter:
+            conditions.append("status = ?")
+            params.append(status_filter)
+        if user_filter:
+            conditions.append("user = ?")
+            params.append(user_filter)
+
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+
+        sql += " ORDER BY created_at DESC"
+
+        c.execute(sql, tuple(params))
+        rows = c.fetchall()
+        conn.close()
+
+        licenses = []
+        for r in rows:
+            licenses.append({
+                "key": r["license_key"],
+                "user": r["user"],
+                "hwid": r["hwid"],
+                "status": r["status"],
+                "expire": r["expire"],
+                "created_at": r["created_at"]
+            })
+
+        return jsonify({"count": len(licenses), "licenses": licenses}), 200
+
+    except Exception as e:
+        print("ERROR listing licenses:", e)
+        return jsonify({"error": str(e)}), 500
 
 # ==============================
 # 🧨 ADMIN: RESET DATABASE
