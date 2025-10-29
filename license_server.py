@@ -121,6 +121,31 @@ def home():
 # ------------------------------
 # 🚀 Run Server
 # ------------------------------
+# 🔐 ADMIN: Create License
+@app.route("/api/admin/create", methods=["POST"])
+def admin_create_license():
+    ...
+    return jsonify({...}), 201
+
+# 🧨 ADMIN: Reset Database (hapus dan buat ulang)
+@app.route("/api/admin/resetdb", methods=["POST"])
+def reset_database():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+            print("🧹 Database lama dihapus.")
+
+        init_db()
+        print("✅ Database baru dibuat.")
+        return jsonify({"message": "Database reset successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
