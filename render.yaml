@@ -1,0 +1,8 @@
+
+services:
+  - type: web
+    name: msi-license-server
+    env: python
+    buildCommand: ""
+    startCommand: "python license_server.py"
+    plan: free
