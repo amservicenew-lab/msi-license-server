@@ -174,6 +174,49 @@ def admin_list_licenses():
     except Exception as e:
         print("ERROR listing licenses:", e)
         return jsonify({"error": str(e)}), 500
+        
+# ==============================
+# 🚫 ADMIN: NONAKTIFKAN / BAN LISENSI
+# ==============================
+@app.route("/api/admin/ban", methods=["POST"])
+def admin_ban_license():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    key = data.get("key") or request.args.get("key")
+    reason = data.get("reason", "No reason provided")
+
+    if not key:
+        return jsonify({"error": "Missing license key"}), 400
+
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+
+        # cek apakah lisensi ada
+        c.execute("SELECT status FROM licenses WHERE license_key = ?", (key,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"error": "License key not found"}), 404
+
+        # update status jadi BANNED
+        c.execute("UPDATE licenses SET status = 'BANNED' WHERE license_key = ?", (key,))
+        conn.commit()
+        conn.close()
+
+        print(f"⛔ Lisensi {key} dinonaktifkan. Alasan: {reason}")
+
+        return jsonify({
+            "message": "License banned successfully",
+            "key": key,
+            "reason": reason
+        }), 200
+
+    except Exception as e:
+        print("🔥 ERROR saat ban license:", e)
+        return jsonify({"error": str(e)}), 500
 
 # ==============================
 # 🧨 ADMIN: RESET DATABASE
