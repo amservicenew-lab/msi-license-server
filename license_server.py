@@ -51,8 +51,54 @@ def require_admin(request):
 @app.route("/api/license", methods=["GET"])
 def check_license():
     key = request.args.get("key")
+    hwid = request.args.get("hwid")
+
     if not key:
         return jsonify({"status": "MISSING_KEY"}), 400
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT status, expire, hwid FROM licenses WHERE license_key = ?", (key,))
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"status": "INVALID"}), 404
+
+    status, expire, stored_hwid = row
+
+    # 🧩 1️⃣ Jika lisensi belum punya HWID, simpan HWID baru (binding)
+    if status == "VALID" and (stored_hwid is None or stored_hwid.strip() == "") and hwid:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("UPDATE licenses SET hwid = ? WHERE license_key = ?", (hwid, key))
+        conn.commit()
+        conn.close()
+        stored_hwid = hwid
+        print(f"🔗 Lisensi {key} diikat ke HWID {hwid}")
+
+    # 🧩 2️⃣ Jika lisensi sudah punya HWID tapi tidak cocok, tolak
+    if stored_hwid and hwid and hwid.strip().upper() != stored_hwid.strip().upper():
+        return jsonify({"status": "HWID_MISMATCH"}), 403
+
+    # 🧩 3️⃣ Cek status lisensi
+    if status != "VALID":
+        return jsonify({"status": status}), 403
+
+    # 🧩 4️⃣ Cek masa berlaku
+    expire_date = datetime.datetime.strptime(expire, "%Y-%m-%d").date()
+    today = datetime.date.today()
+    days_left = (expire_date - today).days
+    if days_left < 0:
+        return jsonify({"status": "EXPIRED"}), 403
+
+    # 🧩 5️⃣ Balikan hasil sukses
+    return jsonify({
+        "status": "VALID",
+        "expire": expire,
+        "days_left": days_left,
+        "hwid": stored_hwid
+    })
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
