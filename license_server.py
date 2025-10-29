@@ -6,12 +6,15 @@ import secrets
 
 app = Flask(__name__)
 
+# ==============================
+# ⚙️ KONFIGURASI
+# ==============================
 DB_NAME = "licenses.db"
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "super-long-admin-token-xyz")  # set di Render Dashboard
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "super-long-admin-token-xyz")  # Ganti di Render ENV
 
-# ------------------------------
-# 🧱 Inisialisasi Database
-# ------------------------------
+# ==============================
+# 🧱 INISIALISASI DATABASE
+# ==============================
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -28,10 +31,12 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+    print("✅ Database siap digunakan.")
 
-# ------------------------------
-# 🛡️ Middleware: Verifikasi Admin Token
-# ------------------------------
+
+# ==============================
+# 🛡️ ADMIN TOKEN VALIDATOR
+# ==============================
 def require_admin(request):
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -40,9 +45,9 @@ def require_admin(request):
     return token == ADMIN_TOKEN
 
 
-# ------------------------------
-# 🔍 Cek License
-# ------------------------------
+# ==============================
+# 🔍 CEK LISENSI
+# ==============================
 @app.route("/api/license", methods=["GET"])
 def check_license():
     key = request.args.get("key")
@@ -76,66 +81,58 @@ def check_license():
     })
 
 
-# ------------------------------
-# 🔐 ADMIN: Buat Lisensi Baru
-# ------------------------------
+# ==============================
+# 🔐 ADMIN: BUAT LISENSI BARU
+# ==============================
 @app.route("/api/admin/create", methods=["POST"])
 def admin_create_license():
     if not require_admin(request):
         return jsonify({"error": "Unauthorized"}), 401
 
-    data = request.get_json()
-    user = data.get("user", "unknown")
-    days = int(data.get("days", 30))
-    hwid = data.get("hwid")
-    expire_date = (datetime.date.today() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
+    try:
+        data = request.get_json()
+        user = data.get("user", "unknown")
+        days = int(data.get("days", 30))
+        hwid = data.get("hwid")
+        expire_date = (datetime.date.today() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
 
-    # Generate random key
-    key = secrets.token_hex(6).upper()
+        # Generate random license key
+        key = secrets.token_hex(6).upper()
 
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO licenses (license_key, user, hwid, status, expire)
-        VALUES (?, ?, ?, 'VALID', ?)
-    """, (key, user, hwid, expire_date))
-    conn.commit()
-    conn.close()
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO licenses (license_key, user, hwid, status, expire)
+            VALUES (?, ?, ?, 'VALID', ?)
+        """, (key, user, hwid, expire_date))
+        conn.commit()
+        conn.close()
 
-    return jsonify({
-        "message": "License created successfully",
-        "key": key,
-        "user": user,
-        "expire": expire_date
-    }), 201
+        print(f"🆕 Lisensi dibuat untuk user '{user}' (key: {key})")
 
+        return jsonify({
+            "message": "License created successfully",
+            "key": key,
+            "user": user,
+            "expire": expire_date
+        }), 201
 
-# ------------------------------
-# 🏠 Root Endpoint
-# ------------------------------
-@app.route("/")
-def home():
-    return jsonify({"message": "🟢 MSI ADB TOOL License Server Active"})
+    except Exception as e:
+        print("🔥 ERROR saat membuat lisensi:", e)
+        return jsonify({"error": str(e)}), 500
 
 
-# ------------------------------
-# 🚀 Run Server
-# ------------------------------
-# 🔐 ADMIN: Create License
-@app.route("/api/admin/create", methods=["POST"])
-def admin_create_license():
-    ...
-    return jsonify({...}), 201
-
-# 🧨 ADMIN: Reset Database (hapus dan buat ulang)
+# ==============================
+# 🧨 ADMIN: RESET DATABASE
+# ==============================
 @app.route("/api/admin/resetdb", methods=["POST"])
 def reset_database():
     if not require_admin(request):
         return jsonify({"error": "Unauthorized"}), 401
 
     try:
-        if os.path.exists(DB_PATH):
-            os.remove(DB_PATH)
+        if os.path.exists(DB_NAME):
+            os.remove(DB_NAME)
             print("🧹 Database lama dihapus.")
 
         init_db()
@@ -143,10 +140,23 @@ def reset_database():
         return jsonify({"message": "Database reset successfully"}), 200
 
     except Exception as e:
+        print("🔥 ERROR saat reset database:", e)
         return jsonify({"error": str(e)}), 500
 
 
+# ==============================
+# 🏠 HOME ENDPOINT
+# ==============================
+@app.route("/")
+def home():
+    return jsonify({"message": "🟢 MSI ADB TOOL License Server Active"})
+
+
+# ==============================
+# 🚀 JALANKAN SERVER
+# ==============================
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
+    print(f"🚀 Server berjalan di port {port}")
     app.run(host="0.0.0.0", port=port)
