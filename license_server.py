@@ -24,7 +24,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             license_key TEXT UNIQUE NOT NULL,
             user TEXT DEFAULT 'unknown',
-            hwid TEXT UNIQUE,          -- hanya satu HWID per lisensi
+            hwid TEXT UNIQUE,
             status TEXT NOT NULL DEFAULT 'VALID',
             expire DATE NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -45,7 +45,7 @@ def require_admin(req):
     return token == ADMIN_TOKEN
 
 # ==============================
-# 🔍 ENDPOINT: CEK LISENSI VIA HWID
+# 🔍 CEK LISENSI VIA HWID
 # ==============================
 @app.route("/api/license/verify_hwid", methods=["GET"])
 def verify_hwid():
@@ -56,16 +56,18 @@ def verify_hwid():
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT license_key, status, expire FROM licenses WHERE hwid = ?", (hwid,))
+    c.execute("SELECT license_key, user, status, expire FROM licenses WHERE hwid = ?", (hwid,))
     row = c.fetchone()
     conn.close()
 
     if not row:
         return jsonify(ok=False, error="HWID not registered"), 404
 
-    license_key = row["license_key"]
+    key = row["license_key"]
+    user = row["user"]
     status = row["status"]
     expire_str = row["expire"]
+
     try:
         expire_date = datetime.datetime.strptime(expire_str, "%Y-%m-%d").date()
     except ValueError:
@@ -81,13 +83,14 @@ def verify_hwid():
 
     return jsonify(ok=True,
                    status="VALID",
-                   key=license_key,
+                   key=key,
+                   user=user,
                    expire=expire_str,
                    days_left=days_left,
                    hwid=hwid)
 
 # ==============================
-# 🔐 ENDPOINT: ADMIN – REGISTER/CREATE LISENSI & BIND HWID OTOMATIS
+# 🔐 ADMIN – BUAT LISENSI BARU
 # ==============================
 @app.route("/api/admin/create", methods=["POST"])
 def admin_create_license():
@@ -100,7 +103,7 @@ def admin_create_license():
     hwid = data.get("hwid", None)
     expire_date = (datetime.date.today() + datetime.timedelta(days=days)).strftime("%Y-%m-%d")
 
-    license_key = secrets.token_hex(6).upper()
+    key = secrets.token_hex(6).upper()
 
     try:
         conn = sqlite3.connect(DB_NAME, check_same_thread=False)
@@ -108,7 +111,7 @@ def admin_create_license():
         c.execute("""
             INSERT INTO licenses (license_key, user, hwid, status, expire)
             VALUES (?, ?, ?, 'VALID', ?)
-        """, (license_key, user, hwid, expire_date))
+        """, (key, user, hwid, expire_date))
         conn.commit()
         conn.close()
     except sqlite3.IntegrityError as e:
@@ -116,16 +119,56 @@ def admin_create_license():
     except Exception as e:
         return jsonify({"error": "Server error", "details": str(e)}), 500
 
-    print(f"🆕 Lisensi dibuat: key={license_key}, user={user}, hwid={hwid}, expire={expire_date}")
+    print(f"🆕 Lisensi dibuat: key={key}, user={user}, hwid={hwid}, expire={expire_date}")
 
-    return jsonify({"message": "License created successfully",
-                    "key": license_key,
-                    "user": user,
-                    "hwid": hwid,
-                    "expire": expire_date}), 201
+    return jsonify({
+        "message": "License created successfully",
+        "key": key,
+        "user": user,
+        "hwid": hwid,
+        "expire": expire_date
+    }), 201
 
 # ==============================
-# 🧾 ENDPOINT: ADMIN – LIST LISENSI
+# 🧩 ADMIN – REGISTER / BIND HWID
+# ==============================
+@app.route("/api/admin/register_hwid", methods=["POST"])
+def admin_register_hwid():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    key = data.get("key")
+    hwid = data.get("hwid")
+
+    if not key or not hwid:
+        return jsonify({"error": "Missing key or hwid"}), 400
+
+    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT id, hwid FROM licenses WHERE license_key = ?", (key,))
+    row = c.fetchone()
+
+    if not row:
+        conn.close()
+        return jsonify({"error": "License key not found"}), 404
+
+    try:
+        c.execute("UPDATE licenses SET hwid = ? WHERE license_key = ?", (hwid, key))
+        conn.commit()
+        conn.close()
+        print(f"🔗 HWID {hwid} telah diikat ke lisensi {key}")
+        return jsonify({
+            "message": "HWID registered successfully",
+            "key": key,
+            "hwid": hwid
+        }), 200
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": "Server error", "details": str(e)}), 500
+
+# ==============================
+# 🧾 ADMIN – LIST LISENSI
 # ==============================
 @app.route("/api/admin/list", methods=["GET"])
 def admin_list_licenses():
@@ -174,7 +217,7 @@ def admin_list_licenses():
         return jsonify({"error": "Server error", "details": str(e)}), 500
 
 # ==============================
-# 🚫 ENDPOINT: ADMIN – BAN / NONAKTIFKAN LISENSI
+# 🚫 ADMIN – NONAKTIFKAN LISENSI
 # ==============================
 @app.route("/api/admin/ban", methods=["POST"])
 def admin_ban_license():
@@ -202,13 +245,17 @@ def admin_ban_license():
         conn.close()
 
         print(f"⛔ Lisensi {key} dinonaktifkan. Alasan: {reason}")
-        return jsonify({"message": "License banned successfully", "key": key, "reason": reason}), 200
+        return jsonify({
+            "message": "License banned successfully",
+            "key": key,
+            "reason": reason
+        }), 200
 
     except Exception as e:
         return jsonify({"error": "Server error", "details": str(e)}), 500
 
 # ==============================
-# 🔁 ENDPOINT: ADMIN – RESET DB
+# 🔁 ADMIN – RESET DATABASE
 # ==============================
 @app.route("/api/admin/resetdb", methods=["POST"])
 def admin_reset_db():
@@ -225,7 +272,7 @@ def admin_reset_db():
         return jsonify({"error": "Server error", "details": str(e)}), 500
 
 # ==============================
-# 🏠 HOME ENDPOINT
+# 🏠 HOME
 # ==============================
 @app.route("/", methods=["GET"])
 def home():
@@ -238,5 +285,4 @@ if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
     print(f"🚀 Server berjalan di port {port}")
-    # Debug mode OFF untuk deployment
     app.run(host="0.0.0.0", port=port, debug=False)
