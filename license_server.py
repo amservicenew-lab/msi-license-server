@@ -45,7 +45,7 @@ def require_admin(req):
     return token == ADMIN_TOKEN
 
 # ==============================
-# 🔍 CEK LISENSI VIA HWID
+# 🔍 CEK LISENSI VIA HWID (AMAN)
 # ==============================
 @app.route("/api/license/verify_hwid", methods=["GET"])
 def verify_hwid():
@@ -53,41 +53,49 @@ def verify_hwid():
     if not hwid:
         return jsonify(ok=False, error="Missing HWID"), 400
 
-    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute("SELECT license_key, user, status, expire FROM licenses WHERE hwid = ?", (hwid,))
-    row = c.fetchone()
-    conn.close()
-
-    if not row:
-        return jsonify(ok=False, error="HWID not registered"), 404
-
-    key = row["license_key"]
-    user = row["user"]
-    status = row["status"]
-    expire_str = row["expire"]
-
     try:
-        expire_date = datetime.datetime.strptime(expire_str, "%Y-%m-%d").date()
-    except ValueError:
-        return jsonify(ok=False, error="Invalid expire date format"), 500
+        conn = sqlite3.connect(DB_NAME, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT user, license_key, status, expire FROM licenses WHERE hwid = ?", (hwid,))
+        row = c.fetchone()
+        conn.close()
 
-    today = datetime.date.today()
-    days_left = (expire_date - today).days
+        if not row:
+            return jsonify(ok=False, error="HWID not registered"), 404
 
-    if status != "VALID":
-        return jsonify(ok=False, status=status, error="License status is not VALID"), 403
-    if days_left < 0:
-        return jsonify(ok=False, status="EXPIRED", error="License expired"), 403
+        status = row["status"]
+        expire = row["expire"]
+        user = row["user"] or "Unknown"
 
-    return jsonify(ok=True,
-                   status="VALID",
-                   key=key,
-                   user=user,
-                   expire=expire_str,
-                   days_left=days_left,
-                   hwid=hwid)
+        # validasi tanggal
+        try:
+            expire_date = datetime.datetime.strptime(expire, "%Y-%m-%d").date()
+        except Exception:
+            return jsonify(ok=False, error="Invalid expire date format"), 500
+
+        today = datetime.date.today()
+        days_left = (expire_date - today).days
+
+        if status != "VALID":
+            return jsonify(ok=False, status=status, error="License not valid"), 403
+        if days_left < 0:
+            return jsonify(ok=False, status="EXPIRED", error="License expired"), 403
+
+        return jsonify({
+            "ok": True,
+            "status": "VALID",
+            "user": user,
+            "expire": expire,
+            "days_left": days_left,
+            "hwid": hwid
+        }), 200
+
+    except sqlite3.Error as e:
+        return jsonify(ok=False, error=f"Database error: {str(e)}"), 500
+    except Exception as e:
+        return jsonify(ok=False, error=f"Server error: {str(e)}"), 500
+
 
 # ==============================
 # 🔐 ADMIN – BUAT LISENSI BARU
