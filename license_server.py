@@ -130,7 +130,7 @@ def admin_create_license():
     }), 201
 
 # ==============================
-# 🧩 ADMIN – REGISTER / BIND HWID
+# 🧩 ADMIN: REGISTER / BIND HWID DENGAN USER NAME
 # ==============================
 @app.route("/api/admin/register_hwid", methods=["POST"])
 def admin_register_hwid():
@@ -138,34 +138,48 @@ def admin_register_hwid():
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json(silent=True) or {}
-    key = data.get("key")
+    user = data.get("user")
     hwid = data.get("hwid")
 
-    if not key or not hwid:
-        return jsonify({"error": "Missing key or hwid"}), 400
+    if not user or not hwid:
+        return jsonify({"error": "Missing user or hwid"}), 400
 
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
     c = conn.cursor()
-    c.execute("SELECT id, hwid FROM licenses WHERE license_key = ?", (key,))
-    row = c.fetchone()
 
-    if not row:
+    # cek apakah HWID sudah ada
+    c.execute("SELECT license_key, user FROM licenses WHERE hwid = ?", (hwid,))
+    existing = c.fetchone()
+    if existing:
         conn.close()
-        return jsonify({"error": "License key not found"}), 404
-
-    try:
-        c.execute("UPDATE licenses SET hwid = ? WHERE license_key = ?", (hwid, key))
-        conn.commit()
-        conn.close()
-        print(f"🔗 HWID {hwid} telah diikat ke lisensi {key}")
         return jsonify({
-            "message": "HWID registered successfully",
-            "key": key,
+            "message": "HWID already registered",
+            "user": existing[1],
             "hwid": hwid
         }), 200
+
+    # buat lisensi baru otomatis
+    license_key = secrets.token_hex(6).upper()
+    expire_date = (datetime.date.today() + datetime.timedelta(days=365)).strftime("%Y-%m-%d")
+
+    try:
+        c.execute("""
+            INSERT INTO licenses (license_key, user, hwid, status, expire)
+            VALUES (?, ?, ?, 'VALID', ?)
+        """, (license_key, user, hwid, expire_date))
+        conn.commit()
+        conn.close()
+        print(f"🆕 HWID {hwid} terdaftar untuk user {user}")
+        return jsonify({
+            "message": "HWID registered successfully",
+            "user": user,
+            "hwid": hwid,
+            "expire": expire_date
+        }), 201
     except Exception as e:
         conn.close()
         return jsonify({"error": "Server error", "details": str(e)}), 500
+
 
 # ==============================
 # 🧾 ADMIN – LIST LISENSI
